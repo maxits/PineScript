@@ -1,0 +1,132 @@
+//@version=4
+strategy("Dutch Bros Strategy",
+         shorttitle="BROS",
+         overlay=false,                                                
+         initial_capital=1000,                         
+         default_qty_value=20,
+         default_qty_type=strategy.percent_of_equity,
+         commission_value=0.1,                         
+         pyramiding=0)                                 
+
+// Overlay = true   (Plots indicator and other things on price chart) 
+// Overlay = false  (Plots indicator and other things on new windows)
+// commission_value (Commission Percentage Value that broker usually charges for opening positions)
+// pyramiding       (If set to 2 or more, opens consecutive positions every time longcondition is true)
+
+///////////////////////////////// Define user input
+
+sep        = input(false, title="============ Plotting Options ============")  
+
+plotlabel  = input(true, title="Plot Label?")                                                                                                   // Plot labels when long conditions (if overlay=true plots above price) (if overlay=false plots above macd))
+dist       = input(5,    title="Label distance from Macd (if overlay=false otherwise distance from Price)") / 100                               //
+plotStop   = input(true, title="Plot Stop? (Only if overlay=true)")                                                                             // Plot Stop Loss and Trailing Stop from Entry Price (only tick if overlay=true)
+plotmacd   = input(true, title="Plot Macd?")                                                                                                    // If overlay is true, due to values of macd, you may want to adjust the right axis get a good view of the indicator
+
+sep1       = input(false, title="============ Strategy Time for Backtesting ============")
+
+i_time     = input(defval = timestamp("16 Sep 2021 09:30 -0400"), title = "Start Time",  type = input.time)                                     // Starting  time for Backtesting // -0400 is the time of Ney York, set it to +0000 for UTC
+f_time     = input(defval = timestamp("04 Oct 2021 16:00 -0400"), title = "Finish Time", type = input.time)                                     // Finishing time for Backtesting // -0400 is the time of Ney York, set it to +0000 for UTC
+
+sep2       = input(false,     title="============ Macd Inputs ============")
+
+_res       = input("15",      title="Macd Resolution", type=input.resolution)                                                                   // Resolution Time Frame // It is better to set the same as chart
+src        = input(close,     title="Macd Source",     type=input.source)                                                                       // Source for calculation of Macd 
+fast_len   = input(defval=12, title="Fast Length",     type=input.integer, minval=1)                                                            // Fast MA Length
+slow_len   = input(defval=26, title="Slow Length",     type=input.integer, minval=1)                                                            // Slow MA Length
+sign_len   = input(defval=9,  title="Sign Length",     type=input.integer, minval=1)                                                            // Sign Length
+macdValue  = input(defval=0.2,title="Value of Macd above Signal Line", type=input.float, step=0.1)                                              // Difference value from macd line to signal line to consider a long signal
+
+sep3       = input(false,     title="============ Strategy Entry Settings ============")
+
+volValue   = input(defval=34.0,  title="Volume spikes in %", step=0.5)/ 100                                                                     // Percentage of Volume to be overcome to consider a long signal 
+enablePip  = input(defval=true,  title="Set Limit Order in Pips (Enable only one)")                                                             // Enable buy limit orders set in pips 
+enablePer  = input(defval=false, title="Set Limit Order in Per (Enable only one)")                                                              // Enable buy limit orders set in percentage from the closing price of the long signal 
+limitPip   = input(defval=100,   title="Buy Limit Order (Pips From Previous Close)")                                                            // Amount of pips to set de Buy Limit Order Price
+limitPer   = input(defval=2.0,   title="Buy Limit Order (% From Previous Close)", step=0.1) / 100                                               // Percentage to set de Buy Limit Order Price
+
+sep4       = input(false,     title="============ Strategy Exit Settings ============")
+
+stopPer    = input(defval=9.0, title="Initial Stop Loss Percentage", step=0.5, minval=0.5) / 100                                                // Initial Stop Loss Percentage from entry price
+cancelPer  = input(defval=3.5, title="Profit Percentage to Cancel Stop Loss", step=0.5, minval=0.5) / 100                                       // Percentage of profit needed to cancel inicial stop loss, and set the trailing stop
+trailPer   = input(defval=2.0, title="Trail Stop Order Percentage (Activates if cancel previous exit order)", step=0.5, minval=0.5) / 100       // Trailing Stop Percentage set from highest high while in position. Activated after cancel previous stoploss order
+
+///////////////////////////////// Macd Calculation
+
+// Color Plot for Macd
+
+col_grow_above = #26A69A
+col_grow_below = #FFCDD2
+col_fall_above = #B2DFDB
+col_fall_below = #EF5350
+
+[macdLine, signalLine, histLine] = security(syminfo.tickerid, _res, macd(src, fast_len, slow_len, sign_len)) // Macd Calculation
+
+// Macd Plotting
+
+plot(plotmacd ? macdLine : na,   title="Macd Line",   color=color.blue)
+plot(plotmacd ? signalLine : na, title="Signal Line", color=color.orange)
+plot(plotmacd ? histLine : na,   style=plot.style_columns, title="Histogram",
+     color=(histLine>=0 ? (histLine[1] < histLine ? col_grow_above : col_fall_above) : 
+     (histLine[1] < histLine ? col_grow_below : col_fall_below)))
+
+///////////////////////////////// Buy Signals
+
+timeCondition   = time > i_time and time < f_time                       // Time Condition for taking trades
+macdCondition   = macdLine > macdValue + signalLine                     // Macd Condition for taking trades
+volumeCondition = volume > (1 + volValue) * volume[1]                   // Volume Condition for taking trades
+
+longCondition   = macdCondition and volumeCondition and timeCondition   // Sends the order if all are true
+
+///////////////////////////////// Strategy Logic
+
+inPosition    = strategy.position_size != 0 
+noPosition    = strategy.position_size == 0 
+longPosition  = strategy.position_size > 0 
+entryPrice    = strategy.position_avg_price
+
+// Variable Declaration
+
+buyPrice        = 0.0
+trailStop       = 0.0
+var_high        = 0.0
+max_high        = 0.0
+i_stopLossPrice = 0.0
+cancelOrder     = false
+
+// Setting Entry Orders 
+
+if longCondition 
+    if enablePip and not enablePer
+        buyPrice := close[1] - limitPip * syminfo.mintick
+    else 
+        if enablePer and not enablePip
+            buyPrice := close[1] * (1 - limitPer)
+        else
+            buyPrice := close[1]
+    strategy.entry("Buy", strategy.long, limit=buyPrice)
+
+// Setting Exit Orders
+
+if inPosition 
+    i_stopLossPrice := entryPrice * (1 - stopPer)  
+    strategy.exit("Exit", "Buy", stop=i_stopLossPrice)
+    var_high := high
+    max_high := max(max_high[1], var_high)
+    cancelOrder := max_high > entryPrice * (1 + cancelPer)
+    if cancelOrder
+        strategy.cancel("Exit")
+        trailStop := max_high * (1 - trailPer)
+        strategy.exit("New Exit", "Buy", stop=trailStop)
+
+// Plotting Labels 
+
+if longCondition and noPosition
+    a_label = plotlabel ? label.new(bar_index, plotStop ? high * (1 + dist) : macdLine * (1 + dist), 
+     text="Long Conditions" + "\nEntry Price: " + tostring(buyPrice, format.mintick) +
+     "\nInicial Stop Loss: " + tostring(buyPrice * (1 - stopPer), format.mintick), 
+     textcolor=color.new(color.white, 0), color=color.new(color.orange, 0)) : na
+
+// Plotting Stop Loss and Trailing Stop Loss
+
+plot(plotStop and inPosition and not cancelOrder and i_stopLossPrice ? i_stopLossPrice : na, "Initial Stop Loss", color=color.new(color.red,0), linewidth=2, style=plot.style_linebr)
+plot(plotStop and inPosition and trailStop ? trailStop : na, "Trailing Stop Level", color=color.new(color.red,0), linewidth=2, style=plot.style_linebr)

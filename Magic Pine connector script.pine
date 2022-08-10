@@ -1,0 +1,193 @@
+//@version=4
+//Time Frame: H1
+strategy("Combined Script", overlay=true)
+
+// User Input 
+plotday    = input(title="Plot Day of Week?", type=input.bool, defval=true)
+plotPinBar = input(title="Plot Pin Bar?", type=input.bool, defval=true)
+plotTarget = input(title="Plot TP/SL?", type=input.bool, defval=true)
+plotlabel  = input(title="Plot Label?", type=input.bool, defval=true)
+labeldist  = input(title="Label Plotting Distance From bar", type=input.integer, defval=5) * syminfo.mintick
+
+sep1       = input(title="=========== Strategy Inputs ===========", defval=false)
+pc_risk    = input(title="Risk Per Trade", defval=3, step=1, maxval=100, minval=1, type=input.float, tooltip="This is how much to risk per trade (if set to %, use whole numbers)")
+ent_canc   = input(title="Cancel Entry After X Bars (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=3,confirm=false)
+
+sep2       = input(title="=========== TP/SL Inputs ===========", defval=false)
+profitPip  = input(title="Profit Target in Pips", type=input.integer, minval=1,maxval=1000,step=1,defval=300,confirm=false)
+atr_mult   = input(title="Stop Loss (x*ATR, Float)",type=input.float,minval=0.1,maxval=100,step=0.1,defval=0.5,confirm=false)
+atr_valu   = input(title="ATR (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=14,confirm=false)
+trailtrig  = input(title="Trailing Stop Loss Trigger Price from entry in pips", type=input.integer, minval=1, maxval=1000, step=1, defval=100, confirm=false)
+traildist  = input(title="Trailing Stop Loss from entry in pips", type=input.integer, minval=1, maxval=1000, step=1, defval=10, confirm=false)
+trailstep  = input(title="Trailing Stop Loss step up", type=input.integer, minval=1, maxval=1000, step=1, defval=10, confirm=false)
+
+sep3       = input(title="=========== MA Inputs ===========", defval=false)
+sma_slow   = input(title="Slow SMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=50,confirm=false)
+ema_medm   = input(title="Medm EMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=18,confirm=false)
+ema_fast   = input(title="Fast EMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=6,confirm=false)
+
+sep4       = input(title="=========== External Alerts Inputs ===========", defval=false)
+pc_id      = input(title="License ID", defval="5510492750007", type=input.string,  tooltip="This is your PineConnector license ID")
+pc_prefix  = input(title="MetaTrader Prefix", defval="", type=input.string,  tooltip="This is your broker's MetaTrader symbol prefix")
+pc_suffix  = input(title="MetaTrader Suffix", defval="", type=input.string,  tooltip="This is your broker's MetaTrader symbol suffix")
+pc_limit   = input(title="Use Limit Order?", defval=true, type=input.bool,  tooltip="If true a limit order will be used, if false a market order will be used")
+
+
+// Create Indicators
+slowSMA       = sma(close, sma_slow)
+medmEMA       = ema(close, ema_medm)
+fastEMA       = ema(close, ema_fast)
+bullishPinBar = ((close > open) and ((open - low)   > 0.66 * (high - low))) or ((close < open) and ((close - low) > 0.66 * (high - low)))
+bearishPinBar = ((close > open) and ((high - close) > 0.66 * (high - low))) or ((close < open) and ((high - open) > 0.66 * (high - low)))
+atr           = atr(atr_valu)
+
+// Specify Trend Conditions
+fanUpTrend = (fastEMA > medmEMA) and (medmEMA > slowSMA)
+fanDnTrend = (fastEMA < medmEMA) and (medmEMA < slowSMA)
+
+// Specify Piercing Conditions
+bullPierce = ((low  < fastEMA) and (open > fastEMA) and (close > fastEMA)) or ((low < medmEMA)  and (open > medmEMA) and (close > medmEMA)) or ((low  < slowSMA) and (open > slowSMA) and (close > slowSMA))
+bearPierce = ((high > fastEMA) and (open < fastEMA) and (close < fastEMA)) or ((high > medmEMA) and (open < medmEMA) and (close < medmEMA)) or ((high > slowSMA) and (open < slowSMA) and (close < slowSMA))
+    
+// Specify Entry Conditions
+longEntry  = fanUpTrend and bullishPinBar and bullPierce
+shortEntry = fanDnTrend and bearishPinBar and bearPierce
+
+// Generate alert string
+var symbol = pc_prefix + syminfo.ticker + pc_suffix
+var limit  = pc_limit  ? "limit" : ""
+var price  = pc_limit  ? "price=" + tostring(close) + "," : ""
+
+pc_entry_alert(direction, price, sl, tp) =>
+    if pc_limit 
+        pc_id + "," + direction + "," + symbol + "," + "price=" + tostring(close) + "," + "sl=" + tostring(sl, '#') + ",tp=" + tostring(tp, '#') + ",trailtrig="+tostring(trailtrig) + ",traildist="+tostring(traildist) + ",trailstep="+tostring(trailstep) + ",risk=" + tostring(pc_risk)
+    else
+        pc_id + "," + direction + "," + symbol + "," + "sl=" + tostring(sl, '#') + ",tp=" + tostring(tp, '#') + ",trailtrig="+tostring(trailtrig) + ",traildist="+tostring(traildist) + ",trailstep="+tostring(trailstep) + ",risk=" + tostring(pc_risk)
+        
+// Strategy Parameters
+inPosition    = strategy.position_size != 0 
+noPosition    = strategy.position_size == 0 
+longPosition  = strategy.position_size > 0 
+shortPosition = strategy.position_size < 0
+mintick       = syminfo.mintick
+positionPrice = strategy.position_avg_price 
+newPosition   = strategy.closedtrades > strategy.closedtrades
+
+// Targets calculation
+stopLoss = 0.0
+if longPosition or longEntry
+    stopLoss   := low[1] - atr[1] * atr_mult
+if shortPosition or shortEntry
+    stopLoss   := high[1] + atr[1] * atr_mult
+
+longprofit  = positionPrice + profitPip * mintick
+longStop    = (positionPrice - valuewhen(longPosition and noPosition[1], stopLoss, 0)) / mintick
+shortprofit = positionPrice - profitPip * mintick
+shortStop   = (valuewhen(shortPosition and noPosition[1], stopLoss, 0) - positionPrice) / mintick
+
+dist = 0.0
+multip = 0
+
+var_high = 0.0
+max_high = 0.0
+l_var_trail = 0.0
+
+if longPosition
+    var_high := high
+    max_high := max(max_high[1], var_high)
+    l_var_trail := positionPrice - longStop * mintick
+    if max_high > positionPrice[1] + trailtrig[1] * mintick
+        dist := (max_high - (positionPrice + trailtrig * mintick)) / mintick
+        multip := int(dist / traildist) 
+        l_var_trail := positionPrice - longStop * mintick + trailstep * multip * mintick
+    else
+        na
+else 
+    na
+
+var_low = 0.0
+min_low = 9999999.99
+s_var_trail = 0.0
+
+if shortPosition
+    var_low := low
+    min_low := min(min_low[1], var_low)
+    s_var_trail := positionPrice + shortStop * mintick
+    if min_low < positionPrice[1] - trailtrig[1] * mintick
+        dist := ((positionPrice - trailtrig * mintick) - min_low) / mintick
+        multip := int(dist / traildist)
+        s_var_trail := positionPrice + shortStop * mintick - trailstep * multip * mintick
+    else
+        na
+else 
+    na        
+
+// Long Entry
+if longEntry
+    risk       = pc_risk * 0.01 * strategy.equity
+    entryPrice = high[1]
+    units      = risk / (entryPrice - stopLoss)
+    if pc_limit
+        strategy.entry("long", strategy.long, units, stop=entryPrice)
+    else
+        strategy.entry("long", strategy.long, units)
+        
+if (noPosition[1] or shortPosition[1]) and longPosition
+    alert_string = pc_entry_alert("buy" + limit, price, longStop, profitPip)
+    alert(alert_string, alert.freq_once_per_bar_close)
+    a_label = plotlabel ? label.new(bar_index, high * (1 + labeldist), text=alert_string, textcolor=color.new(color.white, 0), color=color.new(color.green, 0) ) : na
+
+strategy.exit("exit long", from_entry="long", trail_points=trailtrig, trail_offset=(max_high - l_var_trail) / mintick, profit=profitPip, loss=longStop)
+    
+// Short Entry
+if shortEntry
+    risk       = pc_risk * 0.01 * strategy.equity
+    entryPrice = low[1]
+    units      = risk / (stopLoss - entryPrice)
+    if pc_limit
+        strategy.entry("short", strategy.short, units, stop=entryPrice)
+    else
+        strategy.entry("short", strategy.short, units)
+ 
+if (noPosition[1] or longPosition[1]) and shortPosition
+    alert_string = pc_entry_alert("sell" + limit, price, shortStop, profitPip)
+    alert(alert_string, alert.freq_once_per_bar_close)  
+    a_label = plotlabel ? label.new(bar_index, high * (1 + labeldist), text=alert_string, textcolor=color.new(color.white, 0), color=color.new(color.red, 0) ) : na
+
+strategy.exit("exit short", from_entry="short", trail_points=trailtrig, trail_offset=(s_var_trail - min_low) / mintick, profit=profitPip, loss=shortStop)
+
+// Cancel the Entry if Bar Time is Exceeded
+strategy.cancel("long",  barssince(longEntry)  > ent_canc)
+strategy.cancel("short", barssince(shortEntry) > ent_canc)
+
+// Force Close During Certain Conditions
+strategy.close_all(when = hour==16 and dayofweek==dayofweek.friday, comment = "exit all, market-closed")
+strategy.close_all(when = crossunder(fastEMA, medmEMA), comment = "exit long, re-cross")
+strategy.close_all(when = crossover (fastEMA, medmEMA), comment = "exit short, re-cross")
+
+// Plot Moving Averages to Chart
+plot(fastEMA, color=color.red)
+plot(medmEMA, color=color.blue)
+plot(slowSMA, color=color.green)
+
+// Plot Pin Bars to Chart
+plotshape(plotPinBar ? bullishPinBar : na, text='Bull PB', style=shape.labeldown, location=location.abovebar, color=color.new(color.green, 0), textcolor=color.new(color.white, 0))
+plotshape(plotPinBar ? bearishPinBar : na, text='Bear PB', style=shape.labelup,   location=location.belowbar, color=color.new(color.red, 0),   textcolor=color.new(color.white, 0))
+
+// Plot Days of Week
+plotshape(plotday and hour==0  and dayofweek==dayofweek.monday,    text='Monday',        style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+plotshape(plotday and hour==0  and dayofweek==dayofweek.tuesday,   text='Tuesday',       style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+plotshape(plotday and hour==0  and dayofweek==dayofweek.wednesday, text='Wednesday',     style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+plotshape(plotday and hour==0  and dayofweek==dayofweek.thursday,  text='Thursday',      style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+plotshape(plotday and hour==0  and dayofweek==dayofweek.friday,    text='Friday',        style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+plotshape(plotday and hour==16 and dayofweek==dayofweek.friday,    text='Market Closed', style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 0), textcolor=color.new(color.white, 0))
+
+
+// Plot Targets
+plot(plotTarget and longPosition  ? longprofit : na, title="Long Profit", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and longPosition  ? l_var_trail : na, title="Long Stop Loss", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and longPosition  ? positionPrice + trailtrig * mintick : na, title="Long TrailTrig", color=color.new(color.white, 0), linewidth=2, style=plot.style_linebr)
+
+plot(plotTarget and shortPosition ? shortprofit : na, title="Short Profit", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and shortPosition ? s_var_trail : na, title="Short Stop Loss", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and shortPosition ? positionPrice - trailtrig * mintick : na, title="Short TrailTrig", color=color.new(color.white, 0), linewidth=2, style=plot.style_linebr)

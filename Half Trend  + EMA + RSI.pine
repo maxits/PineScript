@@ -1,0 +1,286 @@
+//@version=4
+strategy("HalfTrend + EMA + RSI",
+     overlay=true,
+     initial_capital=1000,
+     default_qty_value=100,
+     default_qty_type=strategy.percent_of_equity,
+     commission_value=0.025,
+     pyramiding=0)
+
+var group0 = "Indicators Settings"
+initTime         = input(title="Initial Time for Backtesting", defval=timestamp("20 Feb 2020 00:00 +0300"), type=input.time)
+endTime          = input(title="End Time for Backtesting", defval=timestamp("31 Nov 2021 00:00 +0300"), type=input.time)
+inSession        = input(title="Session (UTC Time)", defval="24x7", options=["24x7", "0900-1700", "1700-0100", "0100-0900"])
+plotBG           = input(title="Plot Background Color on Chart?", defval=true)
+colorBG          = input(title="Background Color for Time session", defval=#F012E3, type=input.color)
+plotDots         = input(title="Plot Dots after closing Trades?", defval=true)
+plotLabel        = input(title="Plot Labels on Chart?", defval=true)
+labelPosition    = input(title="Label Positioning", defval=1) / 100
+plotPrevLabel    = input(title="Plot Previous Labels on Chart?", defval=true)
+
+var group1 = "Indicators Settings"
+amplitude        = input(title="Half Trend Amplitude",         defval=4, group=group1)
+channelDeviation = input(title="Half Trend Channel Deviation", defval=4, group=group1)
+rsiLength        = input(title="RSI Length", defval=2, group=group1)
+rsiOB            = input(title="RSI Over Bougth Level", defval=90, group=group1)
+rsiOS            = input(title="RSI Over Sold Level",   defval=10, group=group1)
+emaLength        = input(title="EMA Length", defval=200, group=group1)
+
+var group2 = "Rik Management Settings"
+rrRatio          = input(title="R/R Ratio (1:1 Default)", defval=1.0, step=0.05, group=group2, options=[1, 0.786, 0.618, 0.5, 0.382, 0.236])
+leverage         = input(title="Leverage for positions", defval=5.0, step=0.1, group=group2)
+PercOfBalance    = input(title="Percent of Account Balance %", defval=20.0, group=group2) / 100
+
+var group3 = "Cancel Entry Settings"
+filterHTline     = input(title="Filter using HT line", defval=false, group=group3, tooltip="Long Trades below HT and Short Trades above HT")
+numBars          = input(title="Number Of Bars to cancel Order after Condition", defval=3,  group=group3)
+wickSizePer      = input(title="Wick Size Percentage of Candle", defval=50, group=group3)/100
+CandlePricePer   = input(title="Candle Price Change Percentage", defval=0.2, step=0.05, group=group3)/100
+lookback         = input(title="Number Of Bars to lookback for Comparing Size", defval=10,  group=group3)
+sizeMultip       = input(title="Size Multiplier of biggest Candle from Lookback", defval=1.5, group=group3)
+
+timeInSession    = inSession == "24x7" ? "24x7" : 
+                   inSession == "0900-1700" ? "0900-1700:1234567" :    
+                   inSession == "1700-0100" ? "1700-0100:1234567" :
+                   inSession == "0100-0900" ? "0100-0900:1234567" : na 
+
+//==================== Indicators Calculation
+
+// EMA
+ema = ema(close, emaLength)
+plot(ema, linewidth=2, color=color.new(color.white, 0))
+
+// RSI
+rsi = rsi(close, rsiLength)
+
+// HalfTrend
+var int trend     = 0
+var int nextTrend = 0
+var float maxLowPrice  = nz(low[1], low)
+var float minHighPrice = nz(high[1], high)
+
+var float up    = 0.0
+var float down  = 0.0
+float atrHigh   = 0.0
+float atrLow    = 0.0
+float arrowUp   = na
+float arrowDown = na
+
+atr2 = atr(100) / 2
+dev = channelDeviation * atr2
+
+highPrice = high[abs(highestbars(amplitude))]
+lowPrice  = low[abs(lowestbars(amplitude))]
+highma    = sma(high, amplitude)
+lowma     = sma(low, amplitude)
+
+if nextTrend == 1
+	maxLowPrice := max(lowPrice, maxLowPrice)
+
+	if highma < maxLowPrice and close < nz(low[1], low)
+		trend := 1
+		nextTrend := 0
+		minHighPrice := highPrice
+else
+	minHighPrice := min(highPrice, minHighPrice)
+
+	if lowma > minHighPrice and close > nz(high[1], high)
+		trend := 0
+		nextTrend := 1
+		maxLowPrice := lowPrice
+
+if trend == 0
+	if not na(trend[1]) and trend[1] != 0
+		up := na(down[1]) ? down : down[1]
+		arrowUp := up - atr2
+	else
+		up := na(up[1]) ? maxLowPrice : max(maxLowPrice, up[1])
+	atrHigh := up + dev
+	atrLow := up - dev
+else
+	if not na(trend[1]) and trend[1] != 1 
+		down := na(up[1]) ? up : up[1]
+		arrowDown := down + atr2
+	else
+		down := na(down[1]) ? minHighPrice : min(minHighPrice, down[1])
+	atrHigh := down + dev
+	atrLow := down - dev
+
+ht = trend == 0 ? up : down
+
+var color buyColor  = color.lime
+var color sellColor = color.red
+
+htColor = trend == 0 ? buyColor : sellColor
+htPlot  = plot(ht, title="HalfTrend", linewidth=2, color=htColor)
+
+//================= Entry Position Logic
+
+inPosition    = strategy.position_size != 0 
+noPosition    = strategy.position_size == 0 
+longPosition  = strategy.position_size > 0 
+shortPosition = strategy.position_size < 0
+avgPrice      = strategy.position_avg_price
+
+balance            = strategy.initial_capital + strategy.netprofit  
+balanceInContracts = balance * PercOfBalance * leverage / close 
+
+setupLong     = close < open and rsi < rsiOS and close < ht
+setupShort    = close > open and rsi > rsiOB and close > ht
+
+timeforTrading = time(timeframe.period, timeInSession) and (time > initTime) and (time < endTime)
+bgcolor(time(timeframe.period, timeInSession) and plotBG ? colorBG : na) 
+
+// Long Conditions
+
+htLongCond  = trend == 0 ? 1 : 0
+emaLongCond = close > ema
+setLongCond = setupLong ? 1 : 0
+
+longCond    = htLongCond and emaLongCond and setLongCond
+
+// Canceling Orders
+
+countBarsL      = barssince(longCond)
+cancelLongNumB  = countBarsL >= numBars // Number of Bars after the Condition is met
+cancelLongWick  = longCond and ((close - low)/ (open - low)) > wickSizePer
+cancelLongRisk  = longCond and (open - low) / open < CandlePricePer
+cancelLongBigC  = longCond and (abs(close - open) >= sizeMultip * highest(abs(close[1] - open[1]),lookback))
+cancelLongIndic = close < ema or not htLongCond
+cancelLongFilter= longCond and filterHTline and open > ht ? 1 : 0
+cancelLongOrder = cancelLongNumB or cancelLongWick or cancelLongRisk or cancelLongBigC or cancelLongIndic or cancelLongFilter
+
+entryPrice = 0.0
+risk       = 0.0
+profit     = 0.0
+
+if longCond and timeforTrading and noPosition
+    entryPrice := open
+    risk       := (entryPrice - low)  / (rrRatio * syminfo.mintick)
+    profit     := entryPrice + (entryPrice - low)
+    strategy.entry("Long", long=strategy.long, comment="Long", stop=entryPrice, qty=balanceInContracts)
+    strategy.exit("Exit Long", "Long", limit=profit, loss=risk, qty=100)    
+strategy.cancel("Long", when=cancelLongOrder)
+
+// Short Conditions
+
+htShortCond  = trend == 1 ? 1 : 0
+emaShortCond = close < ema
+setShortCond = setupShort ? 1 : 0
+
+shortCond    = htShortCond and emaShortCond and setShortCond
+
+// Canceling Orders
+countBarsS       = barssince(shortCond)
+cancelShortNumB  = countBarsS >= numBars // Number of Bars after the Condition is met
+cancelShortWick  = shortCond and ((high - close)/ (high - open)) > wickSizePer
+cancelShortRisk  = shortCond and (high - open) / high < CandlePricePer
+cancelShortBigC  = shortCond and (abs(close - open) >= sizeMultip * highest(abs(close[1] - open[1]),lookback))
+cancelShortIndic = close > ema or not htShortCond
+cancelShortFilter= shortCond and filterHTline and open < ht ? 1 : 0
+cancelShortOrder = cancelShortNumB or cancelShortWick or cancelShortRisk or cancelShortBigC or cancelShortIndic or cancelShortFilter
+
+if shortCond and timeforTrading and noPosition
+    entryPrice := open
+    risk       := (high - entryPrice) / (rrRatio * syminfo.mintick)
+    profit     := entryPrice - (high - entryPrice)
+    strategy.entry("Short", long=strategy.short, comment="Short", stop=entryPrice, qty=balanceInContracts)
+    strategy.exit("Exit Short", "Short", limit=profit, loss=risk, qty=100)    
+strategy.cancel("Short", when=cancelShortOrder)
+
+// Plot Dots For Winning or Losing Trades
+
+newWin  = strategy.wintrades  != strategy.wintrades[1]  ? true : false
+newLoss = strategy.losstrades != strategy.losstrades[1] ? true : false
+
+plotshape(newWin  and plotDots ? 1 : 0, title="New Win",  style=shape.circle, color=color.new(color.lime, 0), size=size.normal)
+plotshape(newLoss and plotDots ? 1 : 0, title="New Loss", style=shape.circle, color=color.new(color.red,  0), size=size.normal)
+
+// Alert for Long Positions
+if longCond and not cancelLongWick and not cancelLongRisk and not cancelLongBigC
+    alert("SetUp for Long Position!!", freq=alert.freq_once_per_bar_close)
+    
+// Alert for Short Positions    
+if shortCond and not cancelShortWick and not cancelShortRisk and not cancelShortBigC
+    alert("SetUp for Short Position!!", freq=alert.freq_once_per_bar_close)
+
+
+// Logic For Text Plotting
+
+var string l_char1 = na
+var string l_char2 = na
+var string l_char3 = na
+
+if cancelLongWick
+    l_char1 := "❌ "
+else
+    l_char1 := "✅"
+
+if cancelLongRisk
+    l_char2 := "❌ "
+else
+    l_char2:= "✅"
+    
+if cancelLongBigC
+    l_char3 := "❌ "
+else
+    l_char3 := "✅"
+
+var string longText = na
+if longCond
+    longText := "Long Condition!\n" + "Entry Price = " + tostring(entryPrice) + "\n" + "Take Profit = " + tostring(profit) + "\n" + "Stop Loss = " + tostring(entryPrice - risk * syminfo.mintick, format.mintick) +
+     "\n" + "SetUp Candle Conditions:" + "\nWick Size Percentage of Candle" + tostring(l_char1) + "\nCandle Price Change Percentage" + tostring(l_char2) + "\nVolatility From Last " + tostring(lookback) + " Bars " + tostring(l_char3)
+else 
+    na
+
+// Long Position Label Plotting
+var label longLabel = na
+if longCond and plotLabel
+    if not plotPrevLabel 
+        label.delete(longLabel[1])
+    longLabel := label.new(bar_index, high * (1 + labelPosition), text=longText, color=color.new(color.lime, 50), textcolor=color.new(color.white, 0))
+
+
+// Logic For Text Plotting
+
+var string s_char1 = na
+var string s_char2 = na
+var string s_char3 = na
+
+if cancelShortWick
+    s_char1 := "❌ "
+else
+    s_char1 := "✅"
+
+if cancelShortRisk
+    s_char2 := "❌ "
+else
+    s_char2:= "✅"
+    
+if cancelShortBigC
+    s_char3 := "❌ "
+else
+    s_char3 := "✅"
+
+var string shortText = na
+if shortCond
+    shortText := "Short Condition!\n" + "Entry Price = " + tostring(entryPrice) + "\n" + "Take Profit = " + tostring(profit) + "\n" + "Stop Loss = " + tostring(entryPrice + risk * syminfo.mintick, format.mintick) +
+     "\n" + "SetUp Candle Conditions:" + "\nWick Size Percentage of Candle" + tostring(s_char1) + "\nCandle Price Change Percentage" + tostring(s_char2) + "\nVolatility From Last " + tostring(lookback) + " Bars " + tostring(s_char3)
+else 
+    na
+
+// Long Position Label Plotting
+var label shortLabel = na
+if shortCond and plotLabel
+    if not plotPrevLabel 
+        label.delete(shortLabel[1])
+    shortLabel := label.new(bar_index, high * (1 + labelPosition), text=shortText, color=color.new(color.red, 50), textcolor=color.new(color.white, 0))   
+    
+// Check Marks Erased
+if cancelLongNumB  or cancelLongIndic  or cancelLongFilter
+    label.delete(longLabel)
+
+if cancelShortNumB or cancelShortIndic or cancelShortFilter
+    label.delete(shortLabel)
+plot(shortCond ? 1 : 0 , "long")
+plot(cancelShortOrder ? 1 : 0 , "cancel")

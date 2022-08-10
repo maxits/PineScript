@@ -1,0 +1,251 @@
+//@version=4
+
+strategy("MA & DMI", overlay=true)
+
+// Get user input
+
+plotlabel  = input(title="Plot Pine Connector Label?",  type=input.bool,    defval=true)
+labeldist  = input(title="Label Dist",                  type=input.integer, defval=20) * 10
+plotTarget = input(title="Plot Target?",                type=input.bool,    defval=true)
+plotcross  = input(title="Plot Label on MA Cross?",     type=input.bool,    defval=true)
+lookback   = input(title="How many bars to look back to find cross", type=input.integer, defval=10)
+
+string sep1 = "=========== Moving Average Settings ==========="
+sma_slow = input(title="Slow SMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=50,confirm=false, group=sep1)
+ema_medm = input(title="Medm EMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=18,confirm=false, group=sep1)
+ema_fast = input(title="Fast EMA (Period)",type=input.integer,minval=1,maxval=500,step=1,defval=6, confirm=false, group=sep1)
+
+string sep2 = "=========== DMI Settings ==========="
+lensig      = input(14,   title="ADX Smoothing", type=input.integer, group=sep2, minval=1, maxval=50)
+len         = input(14,   title="DI Length",     type=input.integer, group=sep2, minval=1)
+upperLimit  = input(50,   title="Upper Limit",   type=input.integer, group=sep2)
+middleLimit = input(25,   title="Middle Limit",  type=input.integer, group=sep2)
+lowerLimit  = input(12.5, title="Lower Limit",   type=input.float,   group=sep2)
+
+string sep3 = "=========== PineConnector Settings ==========="
+pc_id     = input(title="License ID",        defval="1234567890123", type=input.string, group=sep3, tooltip="This is your PineConnector license ID")
+pc_risk   = input(title="Risk Per Trade",    defval=1, step=0.5,     type=input.float,  group=sep3, tooltip="This is how much to risk per trade (if set to %, use whole numbers)")
+pc_prefix = input(title="MetaTrader Prefix", defval="",              type=input.string, group=sep3, tooltip="This is your broker's MetaTrader symbol prefix")
+pc_suffix = input(title="MetaTrader Suffix", defval="",              type=input.string, group=sep3, tooltip="This is your broker's MetaTrader symbol suffix")
+pc_limit  = input(title="Use Limit Order?",  defval=true,            type=input.bool,   group=sep3, tooltip="If true a limit order will be used, if false a market order will be used")
+
+string sep4 = "=========== TP/SL Settings ==========="
+profitPip  = input(type=input.integer, minval=1,   maxval=1000, step=1,   defval=300, confirm=false, group=sep4, title="Profit Target in Pips")
+trailtrig  = input(type=input.integer, minval=1,   maxval=1000, step=1,   defval=100, confirm=false, group=sep4, title="Trailing Stop Loss Trigger Price from entry in pips")
+traildist  = input(type=input.integer, minval=1,   maxval=1000, step=1,   defval=10,  confirm=false, group=sep4, title="Trailing Stop Loss from entry in pips")
+trailstep  = input(type=input.integer, minval=1,   maxval=1000, step=1,   defval=10,  confirm=false, group=sep4, title="Trailing Stop Loss step up")
+atr_mult   = input(type=input.float,   minval=0.1, maxval=100,  step=0.1, defval=0.5, confirm=false, group=sep4, title="Stop Loss (x*ATR, Float)")
+atr_valu   = input(type=input.integer, minval=1,   maxval=500,  step=1,   defval=14,  confirm=false, group=sep4, title="ATR (Period)")
+
+//================= Create Indicators
+// SME-EMA
+slowSMA = sma(close, sma_slow)
+medEMA  = ema(close, ema_medm)
+fastEMA = ema(close, ema_fast)
+// DMI
+up      = change(high)
+down    = -change(low)
+plusDM  = na(up) ? na : (up > down and up > 0 ? up : 0)
+minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+trur    = rma(tr, len)
+plus    = fixnan(100 * rma(plusDM, len) / trur)
+minus   = fixnan(100 * rma(minusDM, len) / trur)
+sum     = plus + minus
+adx     = 100 * rma(abs(plus - minus) / (sum == 0 ? 1 : sum), lensig)
+// ATR
+atr = atr(atr_valu)
+
+//================= START Enter-Exit Logic
+dmiPrevCross = 0
+maPrevCross  = 0
+
+longCondition1 = if ((crossover (fastEMA, slowSMA) or crossover (fastEMA, medEMA)) and plus > minus)
+    for i = 1 to lookback
+        if plus[i] < minus[i]
+            dmiPrevCross := dmiPrevCross + 1
+            dmiPrevCross
+        else 
+            dmiPrevCross
+    dmiPrevCross > 0 ? true : false
+else 
+    na
+longCondition2 = if (crossover (plus, minus) and (fastEMA > slowSMA))
+    for i = 1 to lookback
+        if (fastEMA[i] < slowSMA[i])
+            maPrevCross := maPrevCross + 1
+            maPrevCross
+        else
+            maPrevCross
+    maPrevCross > 0 ? true : false        
+else 
+    na
+longCondition3 = if (crossover (plus, minus) and (fastEMA > medEMA))
+    for i = 1 to lookback
+        if (fastEMA[i] < medEMA[i])
+            maPrevCross := maPrevCross + 1
+            maPrevCross
+        else
+            maPrevCross
+    maPrevCross > 0 ? true : false        
+else 
+    na
+longCondition = longCondition1 or longCondition2 or longCondition3
+
+shortCondition1 = if ((crossunder (fastEMA, slowSMA) or crossunder (fastEMA, medEMA)) and plus < minus)
+    for i = 1 to lookback
+        if plus[i] > minus[i]
+            dmiPrevCross := dmiPrevCross + 1
+            dmiPrevCross
+        else 
+            dmiPrevCross
+    dmiPrevCross > 0 ? true : false
+else 
+    na
+shortCondition2 = if (crossunder (plus, minus) and (fastEMA < slowSMA))
+    for i = 1 to lookback
+        if (fastEMA[i] > slowSMA[i])
+            maPrevCross := maPrevCross + 1
+            maPrevCross
+        else
+            maPrevCross
+    maPrevCross > 0 ? true : false        
+else 
+    na
+shortCondition3 = if (crossunder (plus, minus) and (fastEMA < medEMA))
+    for i = 1 to lookback
+        if (fastEMA[i] > medEMA[i])
+            maPrevCross := maPrevCross + 1
+            maPrevCross
+        else
+            maPrevCross
+    maPrevCross > 0 ? true : false        
+else 
+    na
+shortCondition = shortCondition1 or shortCondition2 or shortCondition3
+
+//================= END Enter-Exit Logic
+
+
+// Generate alert string
+var symbol = pc_prefix + syminfo.ticker + pc_suffix
+var limit  = pc_limit  ? "limit" : ""
+var price  = pc_limit  ? "price=" + tostring(close) + "," : ""
+
+pc_entry_alert(direction, price, sl, tp) =>
+    if pc_limit 
+        pc_id + "," + direction + "," + symbol + "," + "price=" + tostring(close) + "," + "sl=" + tostring(sl, '#') + ",tp=" + tostring(tp, '#') + ",trailtrig="+tostring(trailtrig) + ",traildist="+tostring(traildist) + ",trailstep="+tostring(trailstep) + ",risk=" + tostring(pc_risk)
+    else
+        pc_id + "," + direction + "," + symbol + "," + "sl=" + tostring(sl, '#') + ",tp=" + tostring(tp, '#') + ",trailtrig="+tostring(trailtrig) + ",traildist="+tostring(traildist) + ",trailstep="+tostring(trailstep) + ",risk=" + tostring(pc_risk)
+        
+// Strategy Parameters
+inPosition    = strategy.position_size != 0 
+noPosition    = strategy.position_size == 0 
+longPosition  = strategy.position_size > 0 
+shortPosition = strategy.position_size < 0
+mintick       = syminfo.mintick
+positionPrice = strategy.position_avg_price 
+newPosition   = strategy.closedtrades > strategy.closedtrades
+
+// Targets calculation
+stopLossBull = 0.0
+stopLossBear = 0.0
+if longPosition or longCondition
+    stopLossBull := low[1] - atr[1] * atr_mult
+if shortPosition or shortCondition
+    stopLossBear := high[1] + atr[1] * atr_mult
+
+longprofit  = positionPrice + profitPip * mintick
+longStop    = (positionPrice - valuewhen(longPosition and noPosition[1], stopLossBull, 0)) / mintick
+shortprofit = positionPrice - profitPip * mintick
+shortStop   = (valuewhen(shortPosition and noPosition[1], stopLossBear, 0) - positionPrice) / mintick
+
+dist = 0.0
+multip = 0
+
+var_high = 0.0
+max_high = 0.0
+l_var_trail = 0.0
+
+if longPosition
+    var_high := high
+    max_high := max(max_high[1], var_high)
+    l_var_trail := positionPrice - longStop * mintick
+    if max_high > positionPrice[1] + trailtrig[1] * mintick
+        dist := (max_high - (positionPrice + trailtrig * mintick)) / mintick
+        multip := int(dist / traildist) 
+        l_var_trail := positionPrice - longStop * mintick + trailstep * multip * mintick
+    else
+        na
+else 
+    na
+
+var_low = 0.0
+min_low = 9999999.99
+s_var_trail = 0.0
+
+if shortPosition
+    var_low := low
+    min_low := min(min_low[1], var_low)
+    s_var_trail := positionPrice + shortStop * mintick
+    if min_low < positionPrice[1] - trailtrig[1] * mintick
+        dist := ((positionPrice - trailtrig * mintick) - min_low) / mintick
+        multip := int(dist / traildist)
+        s_var_trail := positionPrice + shortStop * mintick - trailstep * multip * mintick
+    else
+        na
+else 
+    na        
+
+// Long Entry
+if longCondition
+    risk       = pc_risk * 0.01 * strategy.equity
+    // entryPriceBull = close[1]
+    unitsBull  = risk / (close[1] - stopLossBull)
+    if pc_limit
+        strategy.entry("long", strategy.long, unitsBull, stop=close[1], alert_message=pc_entry_alert("buy" + limit, price, longStop, profitPip))
+    else
+        strategy.entry("long", strategy.long, unitsBull, alert_message=pc_entry_alert("buy" + limit, price, longStop, profitPip))
+
+if (noPosition[1] or shortPosition[1]) and longPosition
+    alert_string = pc_entry_alert("buy" + limit, price, longStop, profitPip)
+    alert(alert_string, alert.freq_once_per_bar_close)
+    a_label = plotlabel ? label.new(bar_index, high * (1 + labeldist*mintick), text=alert_string, textcolor=color.new(color.white, 0), color=color.new(color.green, 0) ) : na
+
+strategy.exit("exit long", from_entry="long", trail_points=trailtrig, trail_offset=(max_high - l_var_trail) / mintick, profit=profitPip, loss=longStop)
+
+
+if shortCondition
+    risk       = pc_risk * 0.01 * strategy.equity
+    // entryPriceBear = close[1]
+    unitsBear  = risk / (stopLossBear - close[1])
+    if pc_limit
+        strategy.entry("short", strategy.short, unitsBear, stop=close[1], alert_message=pc_entry_alert("sell" + limit, price, longStop, profitPip))
+    else
+        strategy.entry("short", strategy.short, unitsBear, alert_message=pc_entry_alert("sell" + limit, price, longStop, profitPip))
+
+if (noPosition[1] or longPosition[1]) and shortPosition
+    alert_string = pc_entry_alert("sell" + limit, price, shortStop, profitPip)
+    alert(alert_string, alert.freq_once_per_bar_close)  
+    a_label = plotlabel ? label.new(bar_index, high * (1 + labeldist*mintick), text=alert_string, textcolor=color.new(color.white, 0), color=color.new(color.red, 0) ) : na
+
+strategy.exit("exit short", from_entry="short", trail_points=trailtrig, trail_offset=(s_var_trail - min_low) / mintick, profit=profitPip, loss=shortStop)
+
+// Plot Labels to Chart
+labelMAcrossover  = (crossover (fastEMA, slowSMA) or crossover (fastEMA, medEMA)) 
+labelMAcrossunder = (crossunder(fastEMA, slowSMA) or crossunder(fastEMA, medEMA))
+plotshape(plotcross ? labelMAcrossover  : na, text='MA Cross Over',  style=shape.labeldown, location=location.abovebar, color=color.new(color.green, 0), textcolor=color.new(color.white, 0))
+plotshape(plotcross ? labelMAcrossunder : na, text='MA Cross Under', style=shape.labelup,   location=location.belowbar, color=color.new(color.red, 0),   textcolor=color.new(color.white, 0))
+
+plot(plotTarget and longPosition  ? longprofit : na, title="Long Profit", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and longPosition  ? l_var_trail : na, title="Long Stop Loss", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and longPosition  ? positionPrice + trailtrig * mintick : na, title="Long TrailTrig", color=color.new(color.white, 0), linewidth=2, style=plot.style_linebr)
+
+plot(plotTarget and shortPosition ? shortprofit : na, title="Short Profit", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and shortPosition ? s_var_trail : na, title="Short Stop Loss", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(plotTarget and shortPosition ? positionPrice - trailtrig * mintick : na, title="Short TrailTrig", color=color.new(color.white, 0), linewidth=2, style=plot.style_linebr)
+
+
+// Plot Moving Averages to Chart
+plot(fastEMA, color=color.yellow)
+plot(medEMA,  color=color.blue)
+plot(slowSMA, color=color.purple)

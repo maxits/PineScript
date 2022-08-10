@@ -1,0 +1,137 @@
+//@version=4
+strategy("ADX + BB %B + AO + EMA",
+         overlay=true,
+         initial_capital=1000,
+         default_qty_value=20,
+         default_qty_type=strategy.percent_of_equity,
+         commission_value=0.1,
+         pyramiding=0)
+         
+// User Inputs
+
+var group0 = "Trading Settings"
+numTrads   = input(4, type=input.integer, title="Number of Trades Per Day")
+initTime   = input(title="Initial Time for Backtesting", defval=timestamp("20 Feb 2020 00:00 +0300"), type=input.time)
+endTime    = input(title="End Time for Backtesting", defval=timestamp("31 Nov 2021 00:00 +0300"), type=input.time)
+
+var group1 = "EMA Settings"
+ema1Lentgh = input(5,   type=input.integer, title="EMA 1 Length", minval=1, step=1, group=group1)
+ema2Lentgh = input(21,  type=input.integer, title="EMA 2 Length", minval=1, step=1, group=group1) 
+ema3Lentgh = input(50,  type=input.integer, title="EMA 3 Length", minval=1, step=1, group=group1)
+ema4Lentgh = input(200, type=input.integer, title="EMA 4 Length", minval=1, step=1, group=group1)
+
+var group2 = "BB % B Settings"
+BBlength   = input(20,   type=input.integer, title="BB%B Length",       minval=1,    step=1,    group=group2)
+BBstdDev   = input(2.0,  type=input.float,   title="Std Dev",           minval=0.1,  step=0.1,  group=group2)
+BB_OBlevel = input(0.75, type=input.float,   title="Over Bougth Level", minval=0.01, step=0.01, group=group2)
+BB_OSlevel = input(0.25, type=input.float,   title="Over Sold Level",   minval=0.01, step=0.01, group=group2)
+
+var group3 = "ADX Settings"
+ADXlength  = input(14, type=input.integer, title="ADX Length",         minval=1, step=1, group=group3)
+ADXcross   = input(15, type=input.integer, title="ADX Level to Cross", minval=1, step=1, group=group3)
+
+var group4 = "AO Settings"
+LongLevel  = input(2,  type=input.integer, title="AO Level for Longs", step=0.5, group=group4)
+ShortLevel = input(-2, type=input.integer, title="AO Level for Shorts", step=0.5, group=group4)
+
+var group5 = "Risk Management Settings"
+longTPper  = input(2.0, type=input.float, title="Long TP Percentage",  minval=0.1, step=0.1, group=group5)/100
+longSLper  = input(1.0, type=input.float, title="Long SL Percentage",  minval=0.1, step=0.1, group=group5)/100
+shortTPper = input(2.0, type=input.float, title="Short TP Percentage", minval=0.1, step=0.1, group=group5)/100
+shortSLper = input(1.0, type=input.float, title="Short SL percentage", minval=0.1, step=0.1, group=group5)/100
+
+//========================= Indicator Calculation
+
+// EMA
+EMA1 = ema(close, 5)
+EMA2 = ema(close, 21)
+EMA3 = ema(close, 50)
+EMA4 = ema(close, 200)
+
+// ADX
+TrueRange = max(max(high-low, abs(high-nz(close[1]))), abs(low-nz(close[1])))
+DirectionalMovementPlus  = high-nz(high[1]) > nz(low[1])-low ? max(high-nz(high[1]), 0): 0
+DirectionalMovementMinus = nz(low[1])-low > high-nz(high[1]) ? max(nz(low[1])-low, 0): 0
+
+SmoothedTrueRange  = 0.0
+SmoothedTrueRange := nz(SmoothedTrueRange[1]) - (nz(SmoothedTrueRange[1])/14) + TrueRange
+
+SmoothedDirectionalMovementPlus   = 0.0
+SmoothedDirectionalMovementPlus  :=  nz(SmoothedDirectionalMovementPlus[1]) - (nz(SmoothedDirectionalMovementPlus[1])/14)  + DirectionalMovementPlus
+
+SmoothedDirectionalMovementMinus  = 0.0
+SmoothedDirectionalMovementMinus := nz(SmoothedDirectionalMovementMinus[1]) - (nz(SmoothedDirectionalMovementMinus[1])/14) + DirectionalMovementMinus
+
+DIPlus  = SmoothedDirectionalMovementPlus / SmoothedTrueRange * 100
+DIMinus = SmoothedDirectionalMovementMinus / SmoothedTrueRange * 100
+DX      = abs(DIPlus-DIMinus) / (DIPlus+DIMinus)*100
+ADX     = sma(DX, ADXlength)
+
+// BB %B
+basis = sma(close, BBlength)
+dev   = BBstdDev * stdev(close, BBlength)
+upper = basis + dev
+lower = basis - dev
+bbr   = (close - lower)/(upper - lower)
+
+// AO
+ao = sma(hl2,5) - sma(hl2,34)
+
+//================== Long Conditions
+l_cond1 = EMA1 > EMA2
+l_cond2 = EMA3 > EMA4
+l_cond3 = ADX  > ADXcross
+l_cond4 = bbr  > BB_OBlevel
+l_cond5 = ao   > LongLevel
+
+l_trig1 = crossover(EMA1, EMA2)
+l_trig2 = crossover(ADX, ADXcross)
+l_trig3 = crossover(bbr, BB_OBlevel)
+l_trig4 = crossover(ao, LongLevel)
+
+// Long Profit and Loss
+long_TP = strategy.position_avg_price * (1 + longTPper)
+long_SL = strategy.position_avg_price * (1 - longSLper)
+
+strategy.risk.max_intraday_filled_orders(numTrads)
+timeforTrading = time > initTime and time < endTime
+
+if (l_cond1 and l_cond2 and l_cond3 and l_cond4 and l_cond5) and (l_trig1 or l_trig2 or l_trig3 or l_trig4) and (timeforTrading)
+    strategy.entry(id="Go Long", long=strategy.long, comment="Long Entry")
+
+strategy.exit("Exit Long", "Go Long", limit=long_TP, stop=long_SL )
+    
+//================== Short Conditions
+s_cond1 = EMA1 < EMA2
+s_cond2 = EMA3 < EMA4
+s_cond3 = ADX  > ADXcross
+s_cond4 = bbr  < BB_OSlevel
+s_cond5 = ao   < ShortLevel
+
+s_trig1 = crossunder(EMA1, EMA2)
+s_trig2 = crossover (ADX, ADXcross)
+s_trig3 = crossunder(bbr, BB_OSlevel)
+s_trig4 = crossunder(ao, ShortLevel)
+
+// Short Profit and Loss
+short_TP = strategy.position_avg_price * (1 - shortTPper)
+short_SL = strategy.position_avg_price * (1 + shortSLper)
+
+if (s_cond1 and s_cond2 and s_cond3 and s_cond4 and s_cond5) and (s_trig1 or s_trig2 or s_trig3 or s_trig4) and (timeforTrading)
+    strategy.entry(id="Go Short", long=strategy.short, comment="Short Entry")
+
+strategy.exit("Exit Short", "Go Short", limit=short_TP, stop=short_SL )
+
+plot(strategy.position_size > 0 ? long_TP  : na, title="Long TP Level",  color=color.lime,  style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size > 0 ? long_SL  : na, title="Long SL Level",  color=color.red,   style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size < 0 ? short_TP : na, title="Short TP Level", color=color.lime,  style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size < 0 ? short_SL : na, title="Short SL Level", color=color.red,   style=plot.style_linebr, linewidth=2)
+
+plot(EMA1, title="EMA1", color=color.new(color.blue, 0))
+plot(EMA2, title="EMA2", color=color.new(color.yellow, 0))
+plot(EMA3, title="EMA3", color=color.new(color.green, 0))
+plot(EMA4, title="EMA4", color=color.new(color.white, 0))
+
+strategy.cancel("Go Short", strategy.position_size > 0 )
+strategy.cancel("Go Long",  strategy.position_size < 0 )
+    

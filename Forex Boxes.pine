@@ -1,0 +1,271 @@
+//@version=4
+
+study("Forex Boxes", overlay=true)
+
+// User Inputs
+
+string sep1 ="======== 4pm Boxes Settings ========"
+plot4pm     = input(defval=true, title="Plot Previous 4pm Boxes", group=sep1)
+lineColor   = input(#D60606, type=input.color, title="Line Color", group=sep1)
+bgcolorInp  = input(#D85C5C, type=input.color, title="Background Color", group=sep1)
+strokeInp   = input(defval= "Solid", type=input.string, options=["Solid","Dotted","Dashed"], title="Stroke Type", group=sep1)   
+lineWidth   = input(2, type=input.integer, title="Line Width", group=sep1)
+
+string sep2 ="======== 3am to 3pm Boxes Settings ========"
+plotBoxes   = input(defval=true, title="Plot Previous 3am to 3pm Boxes", group=sep2)
+_lineColor  = input(#E0780A, type=input.color, title="Line Color", group=sep2)
+_bgcolorInp = input(#FFD06C, type=input.color, title="Background Color", group=sep2)
+_strokeInp  = input(defval= "Solid", type=input.string, options=["Solid","Dotted","Dashed"], title="Stroke Type", group=sep2)   
+_lineWidth  = input(2, type=input.integer, title="Line Width", group=sep2)
+
+string sep3 ="======== Time Plot Settings ========"
+plotTime    = input(defval=true, title="Plot Time", group=sep3)
+plotprev    = input(defval=true, title="Plot Previous Day Time", group=sep3)
+labelColor  = color.lime 
+labeltext   = input(color.black, type=input.color, title="Text Color", group=sep3)
+textoffset  = input(defval=2, title="Time Text Horizontal Offset", group=sep3) * 1000 * 60
+
+strokeType  =  strokeInp == "Solid"  ? line.style_solid  :
+               strokeInp == "Dotted" ? line.style_dotted :
+               strokeInp == "Dashed" ? line.style_dashed : na   
+             
+_strokeType = _strokeInp == "Solid"  ? line.style_solid  :
+              _strokeInp == "Dotted" ? line.style_dotted :
+              _strokeInp == "Dashed" ? line.style_dashed : na 
+
+_4pm  = time == timestamp("GMT-4", year, month, dayofmonth, 16, 00, 00)
+_3am  = time == timestamp("GMT-4", year, month, dayofmonth, 03, 00, 00)
+_6am  = time == timestamp("GMT-4", year, month, dayofmonth, 06, 00, 00)
+_9am  = time == timestamp("GMT-4", year, month, dayofmonth, 09, 00, 00)
+_12pm = time == timestamp("GMT-4", year, month, dayofmonth, 12, 00, 00)
+_3pm  = time == timestamp("GMT-4", year, month, dayofmonth, 15, 00, 00)
+
+p4pm  = time == timestamp("GMT-4", year, month, dayofmonth, 16, 04, 00)
+p3am  = time == timestamp("GMT-4", year, month, dayofmonth, 03, 04, 00)
+p6am  = time == timestamp("GMT-4", year, month, dayofmonth, 06, 04, 00)
+p9am  = time == timestamp("GMT-4", year, month, dayofmonth, 09, 04, 00)
+p12pm = time == timestamp("GMT-4", year, month, dayofmonth, 12, 04, 00)
+p3pm  = time == timestamp("GMT-4", year, month, dayofmonth, 15, 04, 00)
+
+r4pm  = timestamp("GMT-4", year, month, dayofmonth, 16, 00, 00)
+r3am  = timestamp("GMT-4", year, month, dayofmonth, 03, 00, 00)
+r6am  = timestamp("GMT-4", year, month, dayofmonth, 06, 00, 00)
+r9am  = timestamp("GMT-4", year, month, dayofmonth, 09, 00, 00)
+r12pm = timestamp("GMT-4", year, month, dayofmonth, 12, 00, 00)
+r3pm  = timestamp("GMT-4", year, month, dayofmonth, 15, 00, 00)
+
+endTime = _4pm ? timestamp("GMT-4", year, month, dayofmonth, 16, 00, 00) + 1000 * 60 * 60 * 24 : timestamp("GMT-4", year, month, dayofmonth, 16, 00, 00)
+
+maxVol = highest(volume, 7)
+
+close1 = security(syminfo.tickerid, "1", close)
+open1 = security(syminfo.tickerid, "1", open)
+
+plot(close1)
+
+_3amMaxVol  =  _3am  ? maxVol : na
+_6amMaxVol  =  _6am  ? maxVol : na
+_9amMaxVol  =  _9am  ? maxVol : na
+_12pmMaxVol =  _12pm ? maxVol : na
+_3pmMaxVol  =  _3pm  ? maxVol : na
+_4pmMaxVol  =  _4pm  ? maxVol : na
+
+
+
+bars = 0
+if _3amMaxVol
+    for i = 0 to 3 
+        if volume[i] == _3amMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+if _6amMaxVol
+    for i = 0 to 3 
+        if volume[i] == _6amMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+if _9amMaxVol
+    for i = 0 to 3 
+        if volume[i] == _9amMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+if _12pmMaxVol
+    for i = 0 to 3 
+        if volume[i] == _12pmMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+if _3pmMaxVol
+    for i = 0 to 3 
+        if volume[i] == _3pmMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+if _4pmMaxVol
+    for i = 0 to 3 
+        if volume[i] == _4pmMaxVol
+            bars := i 
+        else 
+            na
+        bars
+else
+    na
+
+labelText =  _4pm  ? "4PM"  :
+             _3am  ? "3AM"  :
+             _6am  ? "6AM"  :
+             _9am  ? "9AM"  :
+             _12pm ? "12PM" :
+             _3pm  ? "3PM"  : na
+
+getIndex = 0
+getOpen  = 0.0
+getClose = 0.0
+getTime  = 0
+
+if _3amMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    
+    aBox = box.new(getTime, getOpen, endTime, getClose,
+     border_color=_lineColor, border_width=_lineWidth,
+     border_style=_strokeType, bgcolor=_bgcolorInp, 
+     xloc=xloc.bar_time)
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+    
+    if not plotBoxes
+        box.delete(aBox[1])
+    
+    if not plotprev
+        label.delete(aLabel[1])
+    
+if _6amMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    
+    aBox = box.new(getTime, getOpen, endTime, getClose, 
+     border_color=_lineColor, border_width=_lineWidth,
+     border_style=_strokeType, bgcolor=_bgcolorInp, 
+     xloc=xloc.bar_time)
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+    
+    if not plotBoxes
+        box.delete(aBox[1])
+        
+    if not plotprev
+        label.delete(aLabel[1])
+        
+if _9amMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    
+    aBox = box.new(getTime, getOpen, endTime, getClose, 
+     border_color=_lineColor, border_width=_lineWidth,
+     border_style=_strokeType, bgcolor=_bgcolorInp, 
+     xloc=xloc.bar_time)
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+    
+    if not plotBoxes
+        box.delete(aBox[1])
+    
+    if not plotprev
+        label.delete(aLabel[1])
+    
+if _12pmMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    
+    aBox = box.new(getTime, getOpen, endTime, getClose, 
+     border_color=_lineColor, border_width=_lineWidth,
+     border_style=_strokeType, bgcolor=_bgcolorInp, 
+     xloc=xloc.bar_time)
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+    
+    if not plotBoxes
+        box.delete(aBox[1])
+        
+    if not plotprev
+        label.delete(aLabel[1])
+
+if _3pmMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    
+    aBox = box.new(getTime, getOpen, endTime, getClose, 
+     border_color=_lineColor, border_width=_lineWidth,
+     border_style=_strokeType, bgcolor=_bgcolorInp, 
+     xloc=xloc.bar_time)
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+    
+    if not plotBoxes
+        box.delete(aBox[1])
+        
+    if not plotprev
+        label.delete(aLabel[1])
+
+if _4pmMaxVol 
+    getIndex := bar_index
+    getOpen  := open1[bars]
+    getClose := close1[bars]
+    getTime  := time - bars * 1000 * 60 
+    fridayTime = timestamp("GMT-4", year, month, dayofmonth + 3, 16, 00, 00)
+    box bBox = na
+    
+    if dayofweek == dayofweek.friday
+        bBox := box.new(getTime, getOpen, fridayTime, getClose, 
+         border_color=lineColor, border_width=lineWidth,
+         border_style=strokeType, bgcolor=bgcolorInp, 
+         xloc=xloc.bar_time)
+    else
+        bBox := box.new(getTime, getOpen, endTime, getClose, 
+         border_color=lineColor, border_width=lineWidth,
+         border_style=strokeType, bgcolor=bgcolorInp, 
+         xloc=xloc.bar_time)    
+    
+    aLabel = plotTime ? label.new(endTime - textoffset, getClose, labelText, color=labelColor, xloc=xloc.bar_time, textcolor=labeltext, style=label.style_none, textalign=text.align_left, size=size.large) : na
+  
+    if not plot4pm
+        box.delete(bBox[1])
+    
+    if not plotprev
+        label.delete(aLabel[1])
+
+
+
